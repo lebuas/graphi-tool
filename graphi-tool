@@ -1,0 +1,683 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Visualización de Red con Captura SVG</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.17.0/xlsx.full.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    
+    <style>
+        html, body {
+            height: 100%;
+            margin: 0;
+            overflow: hidden; 
+            font-family: sans-serif;
+            background-color: #f4f4f4;
+        }
+
+        /* --- CONTENEDOR PRINCIPAL Y ASIDE --- */
+        #main-layout {
+            display: flex;
+            height: calc(100% - 60px); 
+        }
+        #aside-menu {
+            width: 300px; 
+            background-color: #f8f8f8;
+            border-right: 1px solid #ddd;
+            padding: 15px;
+            box-sizing: border-box;
+            overflow-y: hidden; 
+            flex-shrink: 0;
+        }
+        #chart-container {
+            flex-grow: 1; 
+            position: relative;
+        }
+        svg {
+            width: 100%;
+            height: 100%;
+            background-color: #fff;
+        }
+
+        /* --- FOOTER (Solo controles de archivo) --- */
+        #footer {
+            height: 60px;
+            width: 100%;
+            background-color: #333;
+            color: white;
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            padding: 0 20px;
+            box-sizing: border-box;
+            justify-content: space-between;
+        }
+        #footer input[type="file"] { display: none; }
+        #footer label, #footer button {
+            background-color: #007bff;
+            color: white;
+            padding: 10px 15px;
+            border-radius: 5px;
+            cursor: pointer;
+            border: none;
+            transition: background-color 0.3s;
+            font-size: 14px;
+        }
+        #footer label:hover, #footer button:hover {
+            background-color: #0056b3;
+        }
+        #file-controls { display: flex; gap: 10px; }
+        
+        /* --- ESTILOS DEL ASIDE --- */
+        #search-bar {
+            padding: 8px;
+            border-radius: 4px;
+            border: 1px solid #ccc;
+            margin-bottom: 10px;
+            width: 100%;
+            box-sizing: border-box;
+        }
+        #node-list-container {
+            max-height: calc(100% - 100px); 
+            overflow-y: scroll; 
+            border: 1px solid #eee;
+            border-radius: 4px;
+            padding: 5px;
+        }
+        
+        /* --- SCROLLBAR INVISIBLE --- */
+        #node-list-container::-webkit-scrollbar {
+            display: none;
+        }
+        #node-list-container {
+            -ms-overflow-style: none;  
+            scrollbar-width: none;  
+        }
+        
+        .node-list-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 5px 0;
+            border-bottom: 1px dotted #eee;
+            cursor: pointer;
+        }
+        .node-list-item:hover {
+            background-color: #f0f0f0;
+        }
+        .node-name {
+            font-size: 14px;
+            color: #333;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            flex-grow: 1;
+        }
+        .visibility-toggle {
+            font-size: 16px;
+            cursor: pointer;
+            margin-left: 10px;
+            color: #555; 
+        }
+        .visibility-toggle.hidden {
+            color: #d32f2f; 
+        }
+        /* Filtro de nodos ocultos */
+        #filter-hidden-container {
+            margin-top: 10px;
+            font-size: 14px;
+            color: #555;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            margin-bottom: 5px;
+        }
+
+        /* --- ESTILOS DEL GRAFO --- */
+        .link {
+            stroke: #999;
+            stroke-opacity: 0.6;
+            stroke-width: 1.5px;
+            cursor: help; 
+        }
+        .node circle {
+            stroke: #fff;
+            stroke-width: 2px;
+        }
+        .node text {
+            font-size: 10px;
+            fill: #333;
+            text-anchor: middle;
+            pointer-events: none;
+            font-weight: bold; 
+        }
+        /* Clase para ocultar elementos */
+        .hidden-element {
+            visibility: hidden !important;
+        }
+        
+        /* Tooltip */
+        #tooltip {
+            position: absolute;
+            opacity: 0;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 5px 10px;
+            border-radius: 3px;
+            pointer-events: none;
+            z-index: 100;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="main-layout">
+        <aside id="aside-menu">
+            <h2>Control de Nodos</h2>
+            <input type="text" id="search-bar" placeholder="Buscar nombre de nodo...">
+            
+            <div id="filter-hidden-container">
+                <input type="checkbox" id="filter-hidden-checkbox">
+                <label for="filter-hidden-checkbox">Mostrar sólo nodos ocultos</label>
+            </div>
+
+            <div id="node-list-container">
+                <div id="node-list">
+                    <p style="color: #999; margin: 0; font-size: 12px;">Cargue datos para ver la lista de nodos.</p>
+                </div>
+            </div>
+        </aside>
+
+        <div id="chart-container">
+        </div>
+    </div>
+
+    <div id="tooltip"></div>
+
+    <footer id="footer">
+        <span>LebuasNode</span>
+        
+        <div id="file-controls">
+            <label for="file-upload-data">Cargar Datos (Simple)</label>
+            <input type="file" id="file-upload-data" accept=".xlsx, .xls, .csv">
+            
+            <label for="file-upload-coords">Cargar Datos (Organizados)</label>
+            <input type="file" id="file-upload-coords" accept=".xlsx, .xls, .csv">
+
+            <button id="download-coords-btn" disabled>Descargar (Organizados)</button>
+            <button id="capture-svg-btn">Capturar SVG</button>
+        </div>
+    </footer>
+
+    <script>
+        // --- 1. CONFIGURACIÓN INICIAL Y HERRAMIENTAS ---
+        const container = document.getElementById('chart-container');
+        const svg = d3.select(container).append("svg");
+        const tooltip = d3.select("#tooltip");
+        const downloadBtn = document.getElementById('download-coords-btn');
+        const captureSvgBtn = document.getElementById('capture-svg-btn'); 
+        const nodeMenu = d3.select("#node-list");
+        const searchBar = document.getElementById('search-bar');
+        const filterHiddenCheckbox = document.getElementById('filter-hidden-checkbox');
+
+        let simulation;
+        let currentNodes = []; 
+        let currentLinks = []; 
+        const hiddenNodes = new Set(); 
+        const NODE_RADIUS_FACTOR = 3; 
+        
+        const colorRange = [
+            "#cccccc", // Gris para el grado 1
+            "#e0f7fa", 
+            "#b2ebf2", 
+            "#80deea", 
+            "#4dd0e1", 
+            "#26c6da", 
+            "#00bcd4", 
+            "#0097a7", 
+            "#00838f", 
+            "#006064", 
+            "#054e58"  
+        ];
+
+
+        // --- FUNCIONES ESPECÍFICAS DE OCULTAR/MOSTRAR ---
+
+        function updateNodeVisibility() {
+            svg.selectAll(".node")
+                .classed("hidden-element", d => hiddenNodes.has(d.id));
+
+            svg.selectAll(".link")
+                .classed("hidden-element", d => {
+                    return hiddenNodes.has(d.source.id) || hiddenNodes.has(d.target.id);
+                });
+        }
+
+        function toggleNodeVisibility(nodeId) {
+            if (hiddenNodes.has(nodeId)) {
+                hiddenNodes.delete(nodeId);
+            } else {
+                hiddenNodes.add(nodeId);
+            }
+            updateNodeVisibility();
+            drawNodeMenu(currentNodes); 
+        }
+
+        // --- LÓGICA DEL MENÚ ASIDE ---
+
+        function drawNodeMenu(nodes) {
+            nodeMenu.html(""); 
+            
+            const searchTerm = searchBar.value.toLowerCase();
+            const filterToHidden = filterHiddenCheckbox.checked; 
+
+            const filteredNodes = nodes.filter(d => {
+                const matchesSearch = d.name.toLowerCase().includes(searchTerm);
+                const isHidden = hiddenNodes.has(d.id);
+                
+                let passesFilter;
+
+                if (filterToHidden) {
+                    passesFilter = isHidden;
+                } else {
+                    passesFilter = true;
+                }
+
+                return matchesSearch && passesFilter;
+            });
+
+            filteredNodes.sort((a, b) => a.name.localeCompare(b.name));
+
+            nodeMenu.selectAll(".node-list-item")
+                .data(filteredNodes, d => d.id)
+                .join(
+                    enter => {
+                        const div = enter.append("div")
+                            .attr("class", "node-list-item")
+                            .on("click", (event, d) => toggleNodeVisibility(d.id));
+                        
+                        div.append("span")
+                            .attr("class", "node-name")
+                            .text(d => d.name);
+                        
+                        div.append("i")
+                            .attr("class", "fas fa-eye visibility-toggle")
+                            .classed("hidden", d => hiddenNodes.has(d.id));
+                        
+                        return div;
+                    },
+                    update => {
+                        update.select(".visibility-toggle")
+                            .classed("hidden", d => hiddenNodes.has(d.id));
+                        
+                        return update;
+                    },
+                    exit => exit.remove()
+                );
+            
+            if (nodes.length > 0 && filteredNodes.length === 0) {
+                 nodeMenu.html(`<p style="color: #999; margin: 0; font-size: 12px;">No hay coincidencias para "${searchTerm}" con los filtros aplicados.</p>`);
+            }
+        }
+
+        searchBar.addEventListener('input', () => {
+            if (currentNodes.length > 0) drawNodeMenu(currentNodes);
+        });
+
+        filterHiddenCheckbox.addEventListener('change', () => {
+            if (currentNodes.length > 0) drawNodeMenu(currentNodes);
+        });
+
+
+        // ----------------------------------------------------------------------------------
+        // --- GESTIÓN DE ARCHIVOS Y CAPTURA ---
+        // ----------------------------------------------------------------------------------
+
+        function calculateNodeSizes(nodes, links) {
+            const nodeDegrees = {};
+            nodes.forEach(node => nodeDegrees[node.id] = 0); 
+            
+            links.forEach(link => {
+                if (nodeDegrees[link.target] !== undefined) {
+                    nodeDegrees[link.target]++; 
+                }
+            });
+
+            nodes.forEach(node => {
+                node.degree = nodeDegrees[node.id] > 0 ? nodeDegrees[node.id] : 1; 
+                node.radius = node.degree; 
+            });
+            return nodes;
+        }
+
+        function defineArrowMarker(svg, radius) {
+            svg.select("defs").remove();
+            const defs = svg.append("defs");
+            defs.append("marker")
+                .attr("id", "arrowhead")
+                .attr("viewBox", "0 -5 10 10")
+                .attr("refX", 10) 
+                .attr("refY", 0)
+                .attr("markerWidth", 6)
+                .attr("markerHeight", 6)
+                .attr("orient", "auto")
+                .append("path")
+                .attr("d", "M0,-5L10,0L0,5")
+                .attr("fill", "#999");
+        }
+
+
+        // GESTIÓN DE EVENTOS DE ARCHIVOS
+        document.getElementById('file-upload-data').addEventListener('change', (e) => handleFile(e, false), false);
+        document.getElementById('file-upload-coords').addEventListener('change', (e) => handleFile(e, true), false);
+        downloadBtn.addEventListener('click', downloadCoords, false);
+        captureSvgBtn.addEventListener('click', captureSvg, false); 
+
+        function handleFile(e, expectCoords) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                try {
+                    const data = new Uint8Array(event.target.result);
+                    const workbook = XLSX.read(data, { type: 'array' });
+                    const sheetName = workbook.SheetNames[0];
+                    const json = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName]);
+
+                    hiddenNodes.clear(); 
+                    
+                    processData(json, expectCoords);
+                    downloadBtn.disabled = false;
+                } catch (error) {
+                    alert("Error al procesar el archivo. Asegúrate de que es un XLS o CSV válido.");
+                    console.error(error);
+                }
+                e.target.value = '';
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+        function downloadCoords() {
+            if (currentLinks.length === 0) {
+                alert("No hay datos cargados para descargar.");
+                return;
+            }
+
+            const exportData = currentLinks.map(link => {
+                const sourceX = link.source.fx || link.source.x || 0;
+                const sourceY = link.source.fy || link.source.y || 0;
+                const targetX = link.target.fx || link.target.x || 0;
+                const targetY = link.target.y || link.target.y || 0;
+
+                return {
+                    From: link.source.id,
+                    CFrom: `${sourceX.toFixed(2)},${sourceY.toFixed(2)}`,
+                    To: link.target.id,
+                    CTo: `${targetX.toFixed(2)},${targetY.toFixed(2)}`,
+                    Label: link.label
+                };
+            });
+            
+            const ws = XLSX.utils.json_to_sheet(exportData);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "Red Organizada");
+
+            XLSX.writeFile(wb, "red_organizada.xlsx");
+        }
+        
+        // FUNCIÓN DE CAPTURA SVG OPTIMIZADA
+        function captureSvg() {
+            if (currentNodes.length === 0) {
+                alert("No hay nodos para capturar.");
+                return;
+            }
+
+            const svgNode = svg.node();
+            const serializer = new XMLSerializer();
+            
+            // 1. Clonar y limpiar el SVG para exportar (quitar elementos ocultos si los hay)
+            const clonedSvg = svgNode.cloneNode(true);
+            clonedSvg.querySelectorAll('.hidden-element').forEach(el => el.remove());
+
+            // 2. Calcular el ViewBox dinámico
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+            const nodesVisible = currentNodes.filter(d => !hiddenNodes.has(d.id));
+            const padding = 50; // Padding extra para el ViewBox
+
+            nodesVisible.forEach(d => {
+                const r = d.radius * NODE_RADIUS_FACTOR;
+                minX = Math.min(minX, d.x - r);
+                minY = Math.min(minY, d.y - r);
+                maxX = Math.max(maxX, d.x + r);
+                maxY = Math.max(maxY, d.y + r);
+            });
+
+            // Ajustar el ViewBox con padding
+            const finalMinX = minX - padding;
+            const finalMinY = minY - padding;
+            const finalWidth = (maxX - minX) + 2 * padding;
+            const finalHeight = (maxY - minY) + 2 * padding;
+
+            // Establecer el ViewBox y dimensiones para la exportación
+            clonedSvg.setAttribute('viewBox', `${finalMinX} ${finalMinY} ${finalWidth} ${finalHeight}`);
+            clonedSvg.setAttribute('width', finalWidth);
+            clonedSvg.setAttribute('height', finalHeight);
+
+            // 3. Añadir estilos CSS en línea
+            const style = document.createElement('style');
+            style.textContent = `
+                .link { stroke: #999; stroke-opacity: 0.6; stroke-width: 1.5px; }
+                .node circle { stroke: #fff; stroke-width: 2px; }
+                .node text { font-size: 10px; fill: #333; text-anchor: middle; font-weight: bold; }
+                /* Asegurar que las flechas se vean en el archivo */
+                #arrowhead path { fill: #999; }
+            `;
+            clonedSvg.prepend(style);
+
+            // 4. Serializar y descargar
+            let svgString = serializer.serializeToString(clonedSvg);
+            
+            svgString = '<?xml version="1.0" standalone="no"?>\r\n' + svgString;
+            
+            const svgBlob = new Blob([svgString], { type: "image/svg+xml;charset=utf-8" });
+            const svgUrl = URL.createObjectURL(svgBlob);
+            
+            const downloadLink = document.createElement("a");
+            downloadLink.href = svgUrl;
+            downloadLink.download = "captura_red_optimizada.svg";
+            document.body.appendChild(downloadLink);
+            downloadLink.click();
+            document.body.removeChild(downloadLink);
+            
+            URL.revokeObjectURL(svgUrl); 
+        }
+
+
+        function processData(rawLinks, expectCoords) {
+            const nodeSet = new Map();
+            const links = [];
+            let hasCoords = false;
+
+            rawLinks.forEach(d => {
+                const sourceId = String(d.From || d.from || '').trim();
+                const targetId = String(d.To || d.to || '').trim();
+                const label = d.Label || d.label ? String(d.Label || d.label).trim() : '';
+                
+                if (sourceId && targetId) {
+                    if (!nodeSet.has(sourceId)) nodeSet.set(sourceId, { id: sourceId, name: sourceId });
+                    if (!nodeSet.has(targetId)) nodeSet.set(targetId, { id: targetId, name: targetId });
+                    
+                    if (expectCoords && d.CFrom && d.CTo) {
+                        hasCoords = true;
+                        
+                        const [sfx, sfy] = String(d.CFrom).split(',').map(v => parseFloat(v.trim()));
+                        if (!isNaN(sfx) && !isNaN(sfy)) {
+                            nodeSet.get(sourceId).fx = sfx;
+                            nodeSet.get(sourceId).fy = sfy;
+                        }
+
+                        const [tfx, tfy] = String(d.CTo).split(',').map(v => parseFloat(v.trim()));
+                        if (!isNaN(tfx) && !isNaN(tfy)) {
+                            nodeSet.get(targetId).fx = tfx;
+                            nodeSet.get(targetId).fy = tfy;
+                        }
+                    }
+                    
+                    links.push({ source: sourceId, target: targetId, label: label });
+                }
+            });
+
+            const nodes = Array.from(nodeSet.values());
+            
+            if (links.length > 0) {
+                const nodesWithProperties = calculateNodeSizes(nodes, links);
+                drawNetwork(nodesWithProperties, links, hasCoords);
+                drawNodeMenu(nodesWithProperties); 
+            } else {
+                alert("El archivo no contiene las columnas 'From', 'To' y 'Label' esperadas o está vacío.");
+            }
+        }
+
+        function drawNetwork(nodes, links, fixedLayout) {
+            svg.selectAll("*").remove(); 
+
+            currentNodes = nodes; 
+            currentLinks = links; 
+
+            const width = container.clientWidth;
+            const height = container.clientHeight;
+
+            const maxRadiusValue = d3.max(nodes, d => d.radius * NODE_RADIUS_FACTOR) || 15;
+            defineArrowMarker(svg, maxRadiusValue); 
+
+            const colorScale = d3.scaleOrdinal()
+                .domain(d3.range(1, d3.max(nodes, d => d.degree) + 1)) 
+                .range(colorRange); 
+
+            if (simulation) {
+                simulation.stop();
+            }
+            
+            const alphaTarget = fixedLayout ? 0.0 : 0.6; 
+            
+            simulation = d3.forceSimulation(nodes)
+                .alphaTarget(alphaTarget)
+                .force("link", d3.forceLink(links).id(d => d.id).distance(60))
+                .force("charge", d3.forceManyBody().strength(-30)) 
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                
+                .force("limitX", d3.forceX(width / 2).strength(d => {
+                    const radius = d.radius * NODE_RADIUS_FACTOR;
+                    if (d.x < radius || d.x > width - radius) return 0.5;
+                    return 0;
+                }))
+                .force("limitY", d3.forceY(height / 2).strength(d => {
+                    const radius = d.radius * NODE_RADIUS_FACTOR;
+                    if (d.y < radius || d.y > height - radius) return 0.5;
+                    return 0;
+                }));
+
+
+            const link = svg.append("g")
+                .attr("class", "links")
+                .selectAll("line")
+                .data(links)
+                .join("line")
+                .attr("class", "link")
+                .attr("marker-end", "url(#arrowhead)") 
+                
+                .on("mouseover", function(event, d) {
+                    tooltip.style("opacity", 1)
+                           .html(d.label)
+                           .style("left", (event.pageX + 10) + "px")
+                           .style("top", (event.pageY - 28) + "px");
+                    d3.select(this).style("stroke", "#ff0000").style("stroke-width", "3px");
+                })
+                .on("mouseout", function() {
+                    tooltip.style("opacity", 0);
+                    d3.select(this).style("stroke", "#999").style("stroke-width", "1.5px");
+                });
+
+            const node = svg.append("g")
+                .attr("class", "nodes")
+                .selectAll(".node")
+                .data(nodes)
+                .join("g")
+                .attr("class", "node")
+                .call(drag(simulation)); 
+
+            node.append("circle")
+                .attr("r", d => d.radius * NODE_RADIUS_FACTOR)
+                .attr("fill", d => {
+                    const colorIndex = d.degree - 1; 
+                    return colorRange[colorIndex] || colorRange[colorRange.length - 1]; 
+                });
+
+            node.append("text")
+                .text(d => d.name)
+                .attr("dy", 3)
+                .attr("y", d => (d.radius * NODE_RADIUS_FACTOR) + 7);
+
+            simulation.on("tick", () => {
+                link
+                    .each(function(d) {
+                        const radiusTarget = d.target.radius * NODE_RADIUS_FACTOR;
+                        const dx = d.target.x - d.source.x;
+                        const dy = d.target.y - d.source.y;
+                        const distance = Math.sqrt(dx * dx + dy * dy);
+
+                        if (distance < 1) {
+                            d.endX = d.target.x;
+                            d.endY = d.target.y;
+                        } else {
+                            const ratio = (distance - radiusTarget - 5) / distance; 
+                            d.endX = d.source.x + (dx * ratio);
+                            d.endY = d.source.y + (dy * ratio);
+                        }
+                    })
+                    .attr("x1", d => d.source.x)
+                    .attr("y1", d => d.source.y)
+                    .attr("x2", d => d.endX) 
+                    .attr("y2", d => d.endY); 
+
+                node
+                    .attr("transform", d => `translate(${d.x},${d.y})`);
+                    
+                nodes.forEach(d => {
+                    const radius = d.radius * NODE_RADIUS_FACTOR;
+                    d.x = Math.max(radius, Math.min(width - radius, d.x));
+                    d.y = Math.max(radius, Math.min(height - radius, d.y));
+                });
+            });
+            
+            updateNodeVisibility(); 
+        }
+        
+        // FUNCIÓN DRAG AND DROP
+        function drag(simulation) {
+            function dragstarted(event, d) {
+                if (!event.active) simulation.alphaTarget(0.3).restart();
+                d.fx = d.x; 
+                d.fy = d.y; 
+            }
+            function dragged(event, d) {
+                d.fx = event.x; 
+                d.fy = event.y;
+            }
+            function dragended(event, d) {
+                if (!event.active) simulation.alphaTarget(0);
+            }
+            return d3.drag()
+                .on("start", dragstarted)
+                .on("drag", dragged)
+                .on("end", dragended);
+        }
+
+        drawNetwork([], []); 
+
+    </script>
+</body>
+</html>
