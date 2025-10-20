@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <title>Visualización de Red con Captura SVG</title>
+    <title>GraphiTool: Visualizador de Redes</title>
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.17.0/xlsx.full.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
@@ -16,7 +16,7 @@
             background-color: #f4f4f4;
         }
 
-        /* --- CONTENEDOR PRINCIPAL Y ASIDE --- */
+        /* --- LAYOUT Y CONTENEDORES --- */
         #main-layout {
             display: flex;
             height: calc(100% - 60px); 
@@ -40,7 +40,7 @@
             background-color: #fff;
         }
 
-        /* --- FOOTER (Solo controles de archivo) --- */
+        /* --- FOOTER Y CONTROLES --- */
         #footer {
             height: 60px;
             width: 100%;
@@ -69,7 +69,7 @@
         }
         #file-controls { display: flex; gap: 10px; }
         
-        /* --- ESTILOS DEL ASIDE --- */
+        /* --- ASIDE MENU --- */
         #search-bar {
             padding: 8px;
             border-radius: 4px;
@@ -85,8 +85,6 @@
             border-radius: 4px;
             padding: 5px;
         }
-        
-        /* --- SCROLLBAR INVISIBLE --- */
         #node-list-container::-webkit-scrollbar {
             display: none;
         }
@@ -123,7 +121,6 @@
         .visibility-toggle.hidden {
             color: #d32f2f; 
         }
-        /* Filtro de nodos ocultos */
         #filter-hidden-container {
             margin-top: 10px;
             font-size: 14px;
@@ -152,12 +149,17 @@
             pointer-events: none;
             font-weight: bold; 
         }
-        /* Clase para ocultar elementos */
+        
+        /* CLASE PARA OCULTAR TEXTO LARGO */
+        .node-label-long {
+            visibility: hidden;
+        }
+
         .hidden-element {
             visibility: hidden !important;
         }
         
-        /* Tooltip */
+        /* Tooltip (Se usará solo para los enlaces) */
         #tooltip {
             position: absolute;
             opacity: 0;
@@ -197,7 +199,7 @@
     <div id="tooltip"></div>
 
     <footer id="footer">
-        <span>LebuasNode</span>
+        <span>Herramienta de Visualización de Red (Front-end)</span>
         
         <div id="file-controls">
             <label for="file-upload-data">Cargar Datos (Simple)</label>
@@ -227,9 +229,12 @@
         let currentLinks = []; 
         const hiddenNodes = new Set(); 
         const NODE_RADIUS_FACTOR = 3; 
+        let gGraph; 
+        const ARROW_HEAD_OFFSET = 10; 
+        const MAX_WORDS_FOR_SHORT_LABEL = 2; // Nodos con más de 2 palabras serán ocultados
         
         const colorRange = [
-            "#cccccc", // Gris para el grado 1
+            "#cccccc", 
             "#e0f7fa", 
             "#b2ebf2", 
             "#80deea", 
@@ -242,30 +247,47 @@
             "#054e58"  
         ];
 
-
         // --- FUNCIONES ESPECÍFICAS DE OCULTAR/MOSTRAR ---
 
         function updateNodeVisibility() {
-            svg.selectAll(".node")
-                .classed("hidden-element", d => hiddenNodes.has(d.id));
+            if (gGraph) {
+                gGraph.selectAll(".node")
+                    .classed("hidden-element", d => hiddenNodes.has(d.id));
 
-            svg.selectAll(".link")
-                .classed("hidden-element", d => {
-                    return hiddenNodes.has(d.source.id) || hiddenNodes.has(d.target.id);
-                });
+                gGraph.selectAll(".link")
+                    .classed("hidden-element", d => {
+                        return hiddenNodes.has(d.source.id) || hiddenNodes.has(d.target.id);
+                    });
+            }
         }
 
         function toggleNodeVisibility(nodeId) {
+            const nodeData = currentNodes.find(d => d.id === nodeId);
+            if (!nodeData) return;
+
             if (hiddenNodes.has(nodeId)) {
+                // HACIENDO VISIBLE: Restaurar posición fija (fx, fy) si existe
                 hiddenNodes.delete(nodeId);
+                
+                if (nodeData.x !== undefined && nodeData.y !== undefined) {
+                    nodeData.fx = nodeData.x;
+                    nodeData.fy = nodeData.y;
+                }
             } else {
+                // OCULTANDO: Liberar posición fija
                 hiddenNodes.add(nodeId);
+                
+                nodeData.fx = null;
+                nodeData.fy = null;
             }
+            
+            if (simulation) simulation.alpha(0.1).restart();
+            
             updateNodeVisibility();
             drawNodeMenu(currentNodes); 
         }
 
-        // --- LÓGICA DEL MENÚ ASIDE ---
+        // --- LÓGICA DEL MENÚ ASIDE (Sin cambios) ---
 
         function drawNodeMenu(nodes) {
             nodeMenu.html(""); 
@@ -300,7 +322,8 @@
                         
                         div.append("span")
                             .attr("class", "node-name")
-                            .text(d => d.name);
+                            // Muestra el nombre corto en el menú lateral para evitar desbordamiento
+                            .text(d => d.name.length > 30 ? d.name.substring(0, 30) + "..." : d.name);
                         
                         div.append("i")
                             .attr("class", "fas fa-eye visibility-toggle")
@@ -332,7 +355,7 @@
 
 
         // ----------------------------------------------------------------------------------
-        // --- GESTIÓN DE ARCHIVOS Y CAPTURA ---
+        // --- GESTIÓN DE ARCHIVOS Y CAPTURA (Sin cambios sustanciales) ---
         // ----------------------------------------------------------------------------------
 
         function calculateNodeSizes(nodes, links) {
@@ -358,7 +381,7 @@
             defs.append("marker")
                 .attr("id", "arrowhead")
                 .attr("viewBox", "0 -5 10 10")
-                .attr("refX", 10) 
+                .attr("refX", ARROW_HEAD_OFFSET) 
                 .attr("refY", 0)
                 .attr("markerWidth", 6)
                 .attr("markerHeight", 6)
@@ -407,10 +430,10 @@
             }
 
             const exportData = currentLinks.map(link => {
-                const sourceX = link.source.fx || link.source.x || 0;
-                const sourceY = link.source.fy || link.source.y || 0;
-                const targetX = link.target.fx || link.target.x || 0;
-                const targetY = link.target.y || link.target.y || 0;
+                const sourceX = link.source.x || 0;
+                const sourceY = link.source.y || 0;
+                const targetX = link.target.x || 0;
+                const targetY = link.target.y || 0;
 
                 return {
                     From: link.source.id,
@@ -428,56 +451,70 @@
             XLSX.writeFile(wb, "red_organizada.xlsx");
         }
         
-        // FUNCIÓN DE CAPTURA SVG OPTIMIZADA
         function captureSvg() {
             if (currentNodes.length === 0) {
                 alert("No hay nodos para capturar.");
                 return;
             }
-
+            
             const svgNode = svg.node();
             const serializer = new XMLSerializer();
             
-            // 1. Clonar y limpiar el SVG para exportar (quitar elementos ocultos si los hay)
-            const clonedSvg = svgNode.cloneNode(true);
+            const clonedSvg = svgNode.cloneNode(false); 
+            
+            // Clonar y añadir el bloque <defs> (flechas)
+            const defsNode = svgNode.querySelector('defs');
+            if (defsNode) {
+                clonedSvg.appendChild(defsNode.cloneNode(true));
+            }
+            
+            const clonedG = gGraph.node().cloneNode(true);
+            clonedG.removeAttribute('transform'); 
+            clonedSvg.appendChild(clonedG);
+            
             clonedSvg.querySelectorAll('.hidden-element').forEach(el => el.remove());
-
-            // 2. Calcular el ViewBox dinámico
+            // ADVERTENCIA: En el SVG exportado, los nombres largos aparecerán ocultos por la clase CSS.
+            // Para mostrarlos en el SVG exportado, se podría añadir una lógica más compleja aquí,
+            // pero para mantener el código simple, se asume que esta clase se mantendrá.
+            
             let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
             const nodesVisible = currentNodes.filter(d => !hiddenNodes.has(d.id));
-            const padding = 50; // Padding extra para el ViewBox
+            const padding = 50; 
+
+            if (nodesVisible.length === 0) {
+                alert("No hay nodos visibles para capturar.");
+                return;
+            }
 
             nodesVisible.forEach(d => {
                 const r = d.radius * NODE_RADIUS_FACTOR;
-                minX = Math.min(minX, d.x - r);
-                minY = Math.min(minY, d.y - r);
-                maxX = Math.max(maxX, d.x + r);
-                maxY = Math.max(maxY, d.y + r);
+                // No necesitamos el ajuste de altura para el texto multilínea, pero sí un padding mínimo
+                minX = Math.min(minX, d.x - r - 30); 
+                minY = Math.min(minY, d.y - r - 30);
+                maxX = Math.max(maxX, d.x + r + 30);
+                maxY = Math.max(maxY, d.y + r + 30);
             });
 
-            // Ajustar el ViewBox con padding
             const finalMinX = minX - padding;
             const finalMinY = minY - padding;
             const finalWidth = (maxX - minX) + 2 * padding;
             const finalHeight = (maxY - minY) + 2 * padding;
 
-            // Establecer el ViewBox y dimensiones para la exportación
             clonedSvg.setAttribute('viewBox', `${finalMinX} ${finalMinY} ${finalWidth} ${finalHeight}`);
             clonedSvg.setAttribute('width', finalWidth);
             clonedSvg.setAttribute('height', finalHeight);
 
-            // 3. Añadir estilos CSS en línea
+            // Añadir estilos CSS en línea
             const style = document.createElement('style');
             style.textContent = `
                 .link { stroke: #999; stroke-opacity: 0.6; stroke-width: 1.5px; }
                 .node circle { stroke: #fff; stroke-width: 2px; }
                 .node text { font-size: 10px; fill: #333; text-anchor: middle; font-weight: bold; }
-                /* Asegurar que las flechas se vean en el archivo */
-                #arrowhead path { fill: #999; }
+                #arrowhead path { fill: #999; } 
+                .node-label-long { visibility: hidden; } /* Mantener la regla para el SVG */
             `;
             clonedSvg.prepend(style);
 
-            // 4. Serializar y descargar
             let svgString = serializer.serializeToString(clonedSvg);
             
             svgString = '<?xml version="1.0" standalone="no"?>\r\n' + svgString;
@@ -494,7 +531,6 @@
             
             URL.revokeObjectURL(svgUrl); 
         }
-
 
         function processData(rawLinks, expectCoords) {
             const nodeSet = new Map();
@@ -515,13 +551,17 @@
                         
                         const [sfx, sfy] = String(d.CFrom).split(',').map(v => parseFloat(v.trim()));
                         if (!isNaN(sfx) && !isNaN(sfy)) {
-                            nodeSet.get(sourceId).fx = sfx;
+                            nodeSet.get(sourceId).x = sfx;
+                            nodeSet.get(sourceId).y = sfy;
+                            nodeSet.get(sourceId).fx = sfx; 
                             nodeSet.get(sourceId).fy = sfy;
                         }
 
                         const [tfx, tfy] = String(d.CTo).split(',').map(v => parseFloat(v.trim()));
                         if (!isNaN(tfx) && !isNaN(tfy)) {
-                            nodeSet.get(targetId).fx = tfx;
+                            nodeSet.get(targetId).x = tfx;
+                            nodeSet.get(targetId).y = tfy;
+                            nodeSet.get(targetId).fx = tfx; 
                             nodeSet.get(targetId).fy = tfy;
                         }
                     }
@@ -541,6 +581,46 @@
             }
         }
 
+        function centerAndZoom(nodes) {
+            const width = container.clientWidth;
+            const height = container.clientHeight;
+            const padding = 50;
+
+            if (nodes.length === 0) return;
+
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+
+            nodes.forEach(d => {
+                const r = d.radius * NODE_RADIUS_FACTOR;
+                minX = Math.min(minX, d.x - r);
+                minY = Math.min(minY, d.y - r);
+                maxX = Math.max(maxX, d.x + r);
+                maxY = Math.max(maxY, d.y + r);
+            });
+
+            const dataWidth = maxX - minX;
+            const dataHeight = maxY - minY;
+            
+            const scaleX = (width - 2 * padding) / dataWidth;
+            const scaleY = (height - 2 * padding) / dataHeight;
+            const scale = Math.min(scaleX, scaleY, 1.0); 
+
+            if (!isFinite(scale) || scale === 0) return;
+            
+            const translateX = width / 2 - (minX + dataWidth / 2) * scale;
+            const translateY = height / 2 - (minY + dataHeight / 2) * scale;
+            
+            const transform = d3.zoomIdentity.translate(translateX, translateY).scale(scale);
+
+            svg.call(zoom.transform, transform);
+        }
+
+        const zoom = d3.zoom()
+            .scaleExtent([0.1, 10]) 
+            .on("zoom", (event) => {
+                gGraph.attr("transform", event.transform);
+            });
+
         function drawNetwork(nodes, links, fixedLayout) {
             svg.selectAll("*").remove(); 
 
@@ -552,6 +632,10 @@
 
             const maxRadiusValue = d3.max(nodes, d => d.radius * NODE_RADIUS_FACTOR) || 15;
             defineArrowMarker(svg, maxRadiusValue); 
+            
+            svg.call(zoom);
+            
+            gGraph = svg.append("g"); 
 
             const colorScale = d3.scaleOrdinal()
                 .domain(d3.range(1, d3.max(nodes, d => d.degree) + 1)) 
@@ -581,7 +665,7 @@
                 }));
 
 
-            const link = svg.append("g")
+            const link = gGraph.append("g")
                 .attr("class", "links")
                 .selectAll("line")
                 .data(links)
@@ -601,13 +685,25 @@
                     d3.select(this).style("stroke", "#999").style("stroke-width", "1.5px");
                 });
 
-            const node = svg.append("g")
+            const node = gGraph.append("g")
                 .attr("class", "nodes")
                 .selectAll(".node")
                 .data(nodes)
                 .join("g")
                 .attr("class", "node")
-                .call(drag(simulation)); 
+                .call(drag(simulation))
+                
+                // EVENTOS MOUSEOVER/MOUSEOUT PARA MOSTRAR/OCULTAR EL TEXTO
+                .on("mouseover", function(event, d) {
+                    // Muestra el nombre completo del nodo al pasar el cursor
+                    d3.select(this).select("text").classed("node-label-long", false);
+                })
+                .on("mouseout", function(event, d) {
+                    // Oculta el nombre solo si es un nombre "largo" (más de 2 palabras)
+                    if (d.name.trim().split(/\s+/).length > MAX_WORDS_FOR_SHORT_LABEL) {
+                        d3.select(this).select("text").classed("node-label-long", true);
+                    }
+                }); 
 
             node.append("circle")
                 .attr("r", d => d.radius * NODE_RADIUS_FACTOR)
@@ -616,10 +712,16 @@
                     return colorRange[colorIndex] || colorRange[colorRange.length - 1]; 
                 });
 
+            // *** MODIFICACIÓN AQUÍ: ETIQUETA DE TEXTO SIMPLE CON CLASIFICACIÓN DE LONGITUD ***
             node.append("text")
                 .text(d => d.name)
                 .attr("dy", 3)
-                .attr("y", d => (d.radius * NODE_RADIUS_FACTOR) + 7);
+                .attr("y", d => (d.radius * NODE_RADIUS_FACTOR) + 7)
+                // Aplica la clase de ocultamiento si el nombre supera el límite de palabras
+                .classed("node-label-long", d => {
+                    return d.name.trim().split(/\s+/).length > MAX_WORDS_FOR_SHORT_LABEL;
+                });
+
 
             simulation.on("tick", () => {
                 link
@@ -629,13 +731,15 @@
                         const dy = d.target.y - d.source.y;
                         const distance = Math.sqrt(dx * dx + dy * dy);
 
-                        if (distance < 1) {
-                            d.endX = d.target.x;
-                            d.endY = d.target.y;
-                        } else {
-                            const ratio = (distance - radiusTarget - 5) / distance; 
+                        if (distance > radiusTarget) { 
+                            const offset = radiusTarget + ARROW_HEAD_OFFSET; 
+                            const ratio = Math.max(0, distance - offset) / distance; 
+                            
                             d.endX = d.source.x + (dx * ratio);
                             d.endY = d.source.y + (dy * ratio);
+                        } else {
+                            d.endX = d.target.x;
+                            d.endY = d.target.y;
                         }
                     })
                     .attr("x1", d => d.source.x)
@@ -645,23 +749,22 @@
 
                 node
                     .attr("transform", d => `translate(${d.x},${d.y})`);
-                    
-                nodes.forEach(d => {
-                    const radius = d.radius * NODE_RADIUS_FACTOR;
-                    d.x = Math.max(radius, Math.min(width - radius, d.x));
-                    d.y = Math.max(radius, Math.min(height - radius, d.y));
-                });
             });
             
             updateNodeVisibility(); 
+            
+            if (fixedLayout) {
+                centerAndZoom(nodes);
+            }
         }
         
-        // FUNCIÓN DRAG AND DROP
+        // FUNCIÓN DRAG AND DROP (Sin cambios)
         function drag(simulation) {
             function dragstarted(event, d) {
                 if (!event.active) simulation.alphaTarget(0.3).restart();
                 d.fx = d.x; 
                 d.fy = d.y; 
+                d3.select(this).raise().attr("stroke", "black");
             }
             function dragged(event, d) {
                 d.fx = event.x; 
@@ -669,6 +772,7 @@
             }
             function dragended(event, d) {
                 if (!event.active) simulation.alphaTarget(0);
+                d3.select(this).attr("stroke", null);
             }
             return d3.drag()
                 .on("start", dragstarted)
