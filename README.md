@@ -1,7 +1,5 @@
 # 🚀 GraphiTool:https://lebuas.github.io/graphi-tool/
 
-#Documentación Completa
-
 **GraphiTool** es una herramienta web basada en **D3.js** para la visualización, manipulación y gestión de entidades y sus relacines en un sistema. Usando el principio de nodos y aristas, el objetivo principal es permitir a los usuarios visualizar el flujo de los procesos que contiene su sitema, manteniendo la posibilidad de guardar su organización de nodos y restaurar esas posiciones exactas para seguir ordenando la visualización a futuro.
 
 ---
