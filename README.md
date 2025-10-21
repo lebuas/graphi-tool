@@ -54,7 +54,7 @@ La herramienta ofrece controles divididos en un panel lateral (gestión de eleme
 
 | Elemento             | Acción Principal       | Uso                                                                 |
 |----------------------|------------------------|----------------------------------------------------------------------|
-| Lista de Nodos (Clic)| Control de visibilidad | Activa o desactiva la clase `hidden-element` del nodo y sus enlaces. |
+| Lista de Nodos (Clic)| Control de visibilidad | Activa o desactiva la visibilidad de un nodo y sus enlaces. |
 | Buscador             | Filtrado de lista      | Permite encontrar rápidamente un nodo específico para modificar visibilidad. |
 
 ---
