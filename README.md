@@ -58,9 +58,3 @@ La herramienta ofrece controles divididos en un panel lateral (gestión de eleme
 | Buscador             | Filtrado de lista      | Permite encontrar rápidamente un nodo específico para modificar visibilidad. |
 
 ---
-
-## 🧠 Interacción en el Área de Trabajo
-
-- **Arrastrar y Soltar**: Al arrastrar un nodo, se fijan sus coordenadas (`fx`, `fy`), sacándolo temporalmente de la simulación de fuerzas.
-- **Conexiones Dinámicas**: Las flechas se recalculan en cada tick para terminar exactamente en la circunferencia del nodo destino.
-- **Límites de Frontera**: Una fuerza invisible impide que los nodos se muevan fuera del área de visualización.
