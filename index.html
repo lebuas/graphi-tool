@@ -133,6 +133,7 @@
 
         /* --- ESTILOS DEL GRAFO --- */
         .link {
+            fill: none; 
             stroke: #999;
             stroke-opacity: 0.6;
             stroke-width: 1.5px;
@@ -143,23 +144,17 @@
             stroke-width: 2px;
         }
         .node text {
-            font-size: 10px;
-            fill: #333;
+            fill: #000; 
             text-anchor: middle;
-            pointer-events: none;
+            pointer-events: none; 
             font-weight: bold; 
         }
         
-        /* CLASE PARA OCULTAR TEXTO LARGO */
-        .node-label-long {
-            visibility: hidden;
-        }
-
         .hidden-element {
             visibility: hidden !important;
         }
         
-        /* Tooltip (Se usará solo para los enlaces) */
+        /* Tooltip */
         #tooltip {
             position: absolute;
             opacity: 0;
@@ -228,24 +223,74 @@
         let currentNodes = []; 
         let currentLinks = []; 
         const hiddenNodes = new Set(); 
-        const NODE_RADIUS_FACTOR = 3; 
+        
+        // *** AJUSTE DE TAMAÑO: Aumentamos el radio fijo de 25 a 35 ***
+        const FIXED_NODE_RADIUS = 35; 
+        const FONT_SIZE_NODE_TEXT = 10; // Subimos ligeramente el tamaño de fuente
+        
         let gGraph; 
-        const ARROW_HEAD_OFFSET = 10; 
-        const MAX_WORDS_FOR_SHORT_LABEL = 2; // Nodos con más de 2 palabras serán ocultados
+        const ARROW_HEAD_OFFSET = 8; 
         
         const colorRange = [
-            "#cccccc", 
-            "#e0f7fa", 
-            "#b2ebf2", 
-            "#80deea", 
-            "#4dd0e1", 
-            "#26c6da", 
-            "#00bcd4", 
-            "#0097a7", 
-            "#00838f", 
-            "#006064", 
-            "#054e58"  
+            "#cccccc", "#e0f7fa", "#b2ebf2", "#80deea", "#4dd0e1", 
+            "#26c6da", "#00bcd4", "#0097a7", "#00838f", "#006064", "#054e58"  
         ];
+        
+        // ----------------------------------------------------------------------------------
+        // FUNCIÓN MODIFICADA: PARA ENVOLVER TEXTO CON TAMAÑOS FIJOS
+        // ----------------------------------------------------------------------------------
+        function wrapText(textNode, nodeRadius) {
+            const text = textNode.text();
+            if (!text || typeof text !== 'string') return;
+
+            const words = text.split(/\s+/).reverse();
+            let word;
+            let line = [];
+            let lineNumber = 0;
+            const lineHeight = 1.1; 
+            
+            const fontSize = FONT_SIZE_NODE_TEXT; 
+            // Aumentamos ligeramente el ancho máximo ya que el círculo es más grande
+            const maxWidth = nodeRadius * 1.85; 
+            
+            const initialY = textNode.attr("y") ? parseFloat(textNode.attr("y")) : 0;
+            
+            textNode.text(null); 
+            let tspan = textNode.append("tspan").attr("x", 0).attr("y", initialY).attr("dy", "0em");
+
+            function measureText(str) {
+                const tempSvg = d3.select("body").append("svg");
+                const tempText = tempSvg.append("text")
+                    .style("font-size", fontSize + "px")
+                    .style("font-weight", "bold") 
+                    .text(str);
+                const width = tempText.node().getComputedTextLength();
+                tempSvg.remove();
+                return width;
+            }
+
+            while (word = words.pop()) {
+                line.push(word);
+                if (measureText(line.join(" ")) > maxWidth && line.length > 1) {
+                    line.pop(); 
+                    tspan.text(line.join(" ")); 
+                    line = [word]; 
+                    tspan = textNode.append("tspan")
+                                    .attr("x", 0)
+                                    .attr("y", initialY)
+                                    .attr("dy", (++lineNumber * lineHeight) + "em") 
+                                    .text(word);
+                } else {
+                    tspan.text(line.join(" "));
+                }
+            }
+
+            const totalLines = lineNumber + 1; 
+            const totalTextHeight = totalLines * lineHeight * fontSize;
+            const translateY = -totalTextHeight / 2 + (lineHeight * fontSize / 2); 
+            textNode.attr("transform", `translate(0, ${translateY})`);
+        }
+
 
         // --- FUNCIONES ESPECÍFICAS DE OCULTAR/MOSTRAR ---
 
@@ -266,7 +311,6 @@
             if (!nodeData) return;
 
             if (hiddenNodes.has(nodeId)) {
-                // HACIENDO VISIBLE: Restaurar posición fija (fx, fy) si existe
                 hiddenNodes.delete(nodeId);
                 
                 if (nodeData.x !== undefined && nodeData.y !== undefined) {
@@ -274,7 +318,6 @@
                     nodeData.fy = nodeData.y;
                 }
             } else {
-                // OCULTANDO: Liberar posición fija
                 hiddenNodes.add(nodeId);
                 
                 nodeData.fx = null;
@@ -287,7 +330,7 @@
             drawNodeMenu(currentNodes); 
         }
 
-        // --- LÓGICA DEL MENÚ ASIDE (Sin cambios) ---
+        // --- LÓGICA DEL MENÚ ASIDE ---
 
         function drawNodeMenu(nodes) {
             nodeMenu.html(""); 
@@ -322,7 +365,6 @@
                         
                         div.append("span")
                             .attr("class", "node-name")
-                            // Muestra el nombre corto en el menú lateral para evitar desbordamiento
                             .text(d => d.name.length > 30 ? d.name.substring(0, 30) + "..." : d.name);
                         
                         div.append("i")
@@ -353,10 +395,7 @@
             if (currentNodes.length > 0) drawNodeMenu(currentNodes);
         });
 
-
-        // ----------------------------------------------------------------------------------
-        // --- GESTIÓN DE ARCHIVOS Y CAPTURA (Sin cambios sustanciales) ---
-        // ----------------------------------------------------------------------------------
+        // --- GESTIÓN DE ARCHIVOS Y TAMAÑOS ---
 
         function calculateNodeSizes(nodes, links) {
             const nodeDegrees = {};
@@ -370,12 +409,12 @@
 
             nodes.forEach(node => {
                 node.degree = nodeDegrees[node.id] > 0 ? nodeDegrees[node.id] : 1; 
-                node.radius = node.degree; 
+                node.radius = FIXED_NODE_RADIUS; 
             });
             return nodes;
         }
 
-        function defineArrowMarker(svg, radius) {
+        function defineArrowMarker(svg) {
             svg.select("defs").remove();
             const defs = svg.append("defs");
             defs.append("marker")
@@ -462,7 +501,6 @@
             
             const clonedSvg = svgNode.cloneNode(false); 
             
-            // Clonar y añadir el bloque <defs> (flechas)
             const defsNode = svgNode.querySelector('defs');
             if (defsNode) {
                 clonedSvg.appendChild(defsNode.cloneNode(true));
@@ -473,9 +511,6 @@
             clonedSvg.appendChild(clonedG);
             
             clonedSvg.querySelectorAll('.hidden-element').forEach(el => el.remove());
-            // ADVERTENCIA: En el SVG exportado, los nombres largos aparecerán ocultos por la clase CSS.
-            // Para mostrarlos en el SVG exportado, se podría añadir una lógica más compleja aquí,
-            // pero para mantener el código simple, se asume que esta clase se mantendrá.
             
             let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
             const nodesVisible = currentNodes.filter(d => !hiddenNodes.has(d.id));
@@ -487,12 +522,11 @@
             }
 
             nodesVisible.forEach(d => {
-                const r = d.radius * NODE_RADIUS_FACTOR;
-                // No necesitamos el ajuste de altura para el texto multilínea, pero sí un padding mínimo
-                minX = Math.min(minX, d.x - r - 30); 
-                minY = Math.min(minY, d.y - r - 30);
-                maxX = Math.max(maxX, d.x + r + 30);
-                maxY = Math.max(maxY, d.y + r + 30);
+                const r = FIXED_NODE_RADIUS; 
+                minX = Math.min(minX, d.x - r - 10); 
+                minY = Math.min(minY, d.y - r - 10);
+                maxX = Math.max(maxX, d.x + r + 10);
+                maxY = Math.max(maxY, d.y + r + 10);
             });
 
             const finalMinX = minX - padding;
@@ -507,13 +541,16 @@
             // Añadir estilos CSS en línea
             const style = document.createElement('style');
             style.textContent = `
-                .link { stroke: #999; stroke-opacity: 0.6; stroke-width: 1.5px; }
+                .link { fill: none; stroke: #999; stroke-opacity: 0.6; stroke-width: 1.5px; }
                 .node circle { stroke: #fff; stroke-width: 2px; }
-                .node text { font-size: 10px; fill: #333; text-anchor: middle; font-weight: bold; }
+                .node text { font-size: ${FONT_SIZE_NODE_TEXT}px; fill: #000; text-anchor: middle; font-weight: bold; pointer-events: none; } 
                 #arrowhead path { fill: #999; } 
-                .node-label-long { visibility: hidden; } /* Mantener la regla para el SVG */
             `;
             clonedSvg.prepend(style);
+
+            clonedSvg.selectAll(".node text").each(function(d) {
+                wrapText(d3.select(this), FIXED_NODE_RADIUS);
+            });
 
             let svgString = serializer.serializeToString(clonedSvg);
             
@@ -591,7 +628,7 @@
             let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
 
             nodes.forEach(d => {
-                const r = d.radius * NODE_RADIUS_FACTOR;
+                const r = FIXED_NODE_RADIUS;
                 minX = Math.min(minX, d.x - r);
                 minY = Math.min(minY, d.y - r);
                 maxX = Math.max(maxX, d.x + r);
@@ -621,6 +658,10 @@
                 gGraph.attr("transform", event.transform);
             });
 
+        // ----------------------------------------------------------------------------------
+        // --- FUNCIÓN PRINCIPAL DE DIBUJO DE RED (AJUSTADA) ---
+        // ----------------------------------------------------------------------------------
+
         function drawNetwork(nodes, links, fixedLayout) {
             svg.selectAll("*").remove(); 
 
@@ -630,8 +671,7 @@
             const width = container.clientWidth;
             const height = container.clientHeight;
 
-            const maxRadiusValue = d3.max(nodes, d => d.radius * NODE_RADIUS_FACTOR) || 15;
-            defineArrowMarker(svg, maxRadiusValue); 
+            defineArrowMarker(svg); 
             
             svg.call(zoom);
             
@@ -649,17 +689,17 @@
             
             simulation = d3.forceSimulation(nodes)
                 .alphaTarget(alphaTarget)
-                .force("link", d3.forceLink(links).id(d => d.id).distance(60))
-                .force("charge", d3.forceManyBody().strength(-30)) 
+                .force("link", d3.forceLink(links).id(d => d.id).distance(FIXED_NODE_RADIUS * 3))
+                .force("charge", d3.forceManyBody().strength(-200)) 
                 .force("center", d3.forceCenter(width / 2, height / 2))
                 
                 .force("limitX", d3.forceX(width / 2).strength(d => {
-                    const radius = d.radius * NODE_RADIUS_FACTOR;
+                    const radius = FIXED_NODE_RADIUS; 
                     if (d.x < radius || d.x > width - radius) return 0.5;
                     return 0;
                 }))
                 .force("limitY", d3.forceY(height / 2).strength(d => {
-                    const radius = d.radius * NODE_RADIUS_FACTOR;
+                    const radius = FIXED_NODE_RADIUS; 
                     if (d.y < radius || d.y > height - radius) return 0.5;
                     return 0;
                 }));
@@ -667,12 +707,13 @@
 
             const link = gGraph.append("g")
                 .attr("class", "links")
-                .selectAll("line")
+                .selectAll("path")
                 .data(links)
-                .join("line")
+                .join("path")
                 .attr("class", "link")
                 .attr("marker-end", "url(#arrowhead)") 
                 
+                // Mantenemos el tooltip del enlace
                 .on("mouseover", function(event, d) {
                     tooltip.style("opacity", 1)
                            .html(d.label)
@@ -693,62 +734,46 @@
                 .attr("class", "node")
                 .call(drag(simulation))
                 
-                // EVENTOS MOUSEOVER/MOUSEOUT PARA MOSTRAR/OCULTAR EL TEXTO
-                .on("mouseover", function(event, d) {
-                    // Muestra el nombre completo del nodo al pasar el cursor
-                    d3.select(this).select("text").classed("node-label-long", false);
-                })
-                .on("mouseout", function(event, d) {
-                    // Oculta el nombre solo si es un nombre "largo" (más de 2 palabras)
-                    if (d.name.trim().split(/\s+/).length > MAX_WORDS_FOR_SHORT_LABEL) {
-                        d3.select(this).select("text").classed("node-label-long", true);
-                    }
-                }); 
+                // *** MODIFICADO: Eliminados los eventos mouseover/mouseout del nodo ***
+                .on("mouseover", null)
+                .on("mouseout", null); 
 
             node.append("circle")
-                .attr("r", d => d.radius * NODE_RADIUS_FACTOR)
+                .attr("r", FIXED_NODE_RADIUS)
                 .attr("fill", d => {
-                    const colorIndex = d.degree - 1; 
+                    const colorIndex = Math.min(d.degree - 1, colorRange.length - 1);
                     return colorRange[colorIndex] || colorRange[colorRange.length - 1]; 
                 });
 
-            // *** MODIFICACIÓN AQUÍ: ETIQUETA DE TEXTO SIMPLE CON CLASIFICACIÓN DE LONGITUD ***
             node.append("text")
                 .text(d => d.name)
-                .attr("dy", 3)
-                .attr("y", d => (d.radius * NODE_RADIUS_FACTOR) + 7)
-                // Aplica la clase de ocultamiento si el nombre supera el límite de palabras
-                .classed("node-label-long", d => {
-                    return d.name.trim().split(/\s+/).length > MAX_WORDS_FOR_SHORT_LABEL;
+                .style("font-size", FONT_SIZE_NODE_TEXT + "px") 
+                .each(function(d) {
+                    wrapText(d3.select(this), FIXED_NODE_RADIUS); 
                 });
 
 
             simulation.on("tick", () => {
-                link
-                    .each(function(d) {
-                        const radiusTarget = d.target.radius * NODE_RADIUS_FACTOR;
-                        const dx = d.target.x - d.source.x;
-                        const dy = d.target.y - d.source.y;
-                        const distance = Math.sqrt(dx * dx + dy * dy);
+                link.attr("d", d => {
+                    const radiusTarget = FIXED_NODE_RADIUS; 
+                    const dx = d.target.x - d.source.x;
+                    const dy = d.target.y - d.source.y;
+                    const dr = Math.sqrt(dx * dx + dy * dy); 
+                    
+                    const targetDistance = radiusTarget + ARROW_HEAD_OFFSET; 
+                    
+                    if (dr < targetDistance) {
+                        return `M${d.source.x},${d.source.y}A${dr},${dr} 0 0,1 ${d.target.x},${d.target.y}`;
+                    }
 
-                        if (distance > radiusTarget) { 
-                            const offset = radiusTarget + ARROW_HEAD_OFFSET; 
-                            const ratio = Math.max(0, distance - offset) / distance; 
-                            
-                            d.endX = d.source.x + (dx * ratio);
-                            d.endY = d.source.y + (dy * ratio);
-                        } else {
-                            d.endX = d.target.x;
-                            d.endY = d.target.y;
-                        }
-                    })
-                    .attr("x1", d => d.source.x)
-                    .attr("y1", d => d.source.y)
-                    .attr("x2", d => d.endX) 
-                    .attr("y2", d => d.endY); 
+                    const ratio = (dr - targetDistance) / dr;
+                    const Tx = d.source.x + (dx * ratio);
+                    const Ty = d.source.y + (dy * ratio);
 
-                node
-                    .attr("transform", d => `translate(${d.x},${d.y})`);
+                    return `M${d.source.x},${d.source.y}A${dr},${dr} 0 0,1 ${Tx},${Ty}`;
+                });
+                
+                node.attr("transform", d => `translate(${d.x},${d.y})`);
             });
             
             updateNodeVisibility(); 
@@ -758,13 +783,13 @@
             }
         }
         
-        // FUNCIÓN DRAG AND DROP (Sin cambios)
+        // FUNCIÓN DRAG AND DROP (ARRASTRAR)
         function drag(simulation) {
             function dragstarted(event, d) {
                 if (!event.active) simulation.alphaTarget(0.3).restart();
                 d.fx = d.x; 
                 d.fy = d.y; 
-                d3.select(this).raise().attr("stroke", "black");
+                // *** MODIFICADO: Eliminado .attr("stroke", "black") ***
             }
             function dragged(event, d) {
                 d.fx = event.x; 
@@ -772,7 +797,7 @@
             }
             function dragended(event, d) {
                 if (!event.active) simulation.alphaTarget(0);
-                d3.select(this).attr("stroke", null);
+                // *** MODIFICADO: Eliminado .attr("stroke", null) ***
             }
             return d3.drag()
                 .on("start", dragstarted)
