@@ -142,12 +142,27 @@
         .node circle {
             stroke: #fff;
             stroke-width: 2px;
+            cursor: move;
         }
         .node text {
             fill: #000; 
             text-anchor: middle;
             pointer-events: none; 
             font-weight: bold; 
+        }
+        
+        /* Estilo para nodos seleccionados */
+        .node.selected circle {
+            stroke: #ff0000;
+            stroke-width: 4px;
+        }
+
+        /* Estilo para el cuadro de selección (Lasso) */
+        #selection-box {
+            fill: rgba(0, 0, 255, 0.1);
+            stroke: blue;
+            stroke-dasharray: 4;
+            pointer-events: none; 
         }
         
         .hidden-element {
@@ -173,6 +188,9 @@
     <div id="main-layout">
         <aside id="aside-menu">
             <h2>Control de Nodos</h2>
+            <p style="font-size: 12px; color: #555;">
+                Para mover nodos en grupo: **Mantén presionada la tecla Ctrl/Cmd** y arrastra el ratón sobre el lienzo.
+            </p>
             <input type="text" id="search-bar" placeholder="Buscar nombre de nodo...">
             
             <div id="filter-hidden-container">
@@ -223,12 +241,16 @@
         let currentNodes = []; 
         let currentLinks = []; 
         const hiddenNodes = new Set(); 
+        const selectedNodes = new Set(); 
         
-        // *** AJUSTE DE TAMAÑO: Aumentamos el radio fijo de 25 a 35 ***
+        // *** TAMAÑO AJUSTADO ***
         const FIXED_NODE_RADIUS = 35; 
-        const FONT_SIZE_NODE_TEXT = 10; // Subimos ligeramente el tamaño de fuente
+        const FONT_SIZE_NODE_TEXT = 10; 
         
         let gGraph; 
+        let gSelection; 
+        let selectionBox; 
+        let currentTransform = d3.zoomIdentity; 
         const ARROW_HEAD_OFFSET = 8; 
         
         const colorRange = [
@@ -237,7 +259,7 @@
         ];
         
         // ----------------------------------------------------------------------------------
-        // FUNCIÓN MODIFICADA: PARA ENVOLVER TEXTO CON TAMAÑOS FIJOS
+        // FUNCIONES AUXILIARES (WRAP TEXT)
         // ----------------------------------------------------------------------------------
         function wrapText(textNode, nodeRadius) {
             const text = textNode.text();
@@ -250,7 +272,6 @@
             const lineHeight = 1.1; 
             
             const fontSize = FONT_SIZE_NODE_TEXT; 
-            // Aumentamos ligeramente el ancho máximo ya que el círculo es más grande
             const maxWidth = nodeRadius * 1.85; 
             
             const initialY = textNode.attr("y") ? parseFloat(textNode.attr("y")) : 0;
@@ -291,9 +312,8 @@
             textNode.attr("transform", `translate(0, ${translateY})`);
         }
 
-
-        // --- FUNCIONES ESPECÍFICAS DE OCULTAR/MOSTRAR ---
-
+        // --- FUNCIONES DE VISIBILIDAD, SELECCIÓN Y MENÚ ---
+        
         function updateNodeVisibility() {
             if (gGraph) {
                 gGraph.selectAll(".node")
@@ -304,6 +324,11 @@
                         return hiddenNodes.has(d.source.id) || hiddenNodes.has(d.target.id);
                     });
             }
+        }
+        
+        function updateNodeSelection() {
+            gGraph.selectAll(".node")
+                .classed("selected", d => selectedNodes.has(d.id));
         }
 
         function toggleNodeVisibility(nodeId) {
@@ -329,8 +354,6 @@
             updateNodeVisibility();
             drawNodeMenu(currentNodes); 
         }
-
-        // --- LÓGICA DEL MENÚ ASIDE ---
 
         function drawNodeMenu(nodes) {
             nodeMenu.html(""); 
@@ -395,8 +418,6 @@
             if (currentNodes.length > 0) drawNodeMenu(currentNodes);
         });
 
-        // --- GESTIÓN DE ARCHIVOS Y TAMAÑOS ---
-
         function calculateNodeSizes(nodes, links) {
             const nodeDegrees = {};
             nodes.forEach(node => nodeDegrees[node.id] = 0); 
@@ -430,8 +451,6 @@
                 .attr("fill", "#999");
         }
 
-
-        // GESTIÓN DE EVENTOS DE ARCHIVOS
         document.getElementById('file-upload-data').addEventListener('change', (e) => handleFile(e, false), false);
         document.getElementById('file-upload-coords').addEventListener('change', (e) => handleFile(e, true), false);
         downloadBtn.addEventListener('click', downloadCoords, false);
@@ -450,6 +469,7 @@
                     const json = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName]);
 
                     hiddenNodes.clear(); 
+                    selectedNodes.clear();
                     
                     processData(json, expectCoords);
                     downloadBtn.disabled = false;
@@ -490,69 +510,123 @@
             XLSX.writeFile(wb, "red_organizada.xlsx");
         }
         
+        // ----------------------------------------------------------------------------------
+        // *** FUNCIÓN CAPTURE SVG CORREGIDA ***
+        // ----------------------------------------------------------------------------------
         function captureSvg() {
             if (currentNodes.length === 0) {
                 alert("No hay nodos para capturar.");
                 return;
             }
             
-            const svgNode = svg.node();
-            const serializer = new XMLSerializer();
-            
-            const clonedSvg = svgNode.cloneNode(false); 
-            
-            const defsNode = svgNode.querySelector('defs');
-            if (defsNode) {
-                clonedSvg.appendChild(defsNode.cloneNode(true));
-            }
-            
-            const clonedG = gGraph.node().cloneNode(true);
-            clonedG.removeAttribute('transform'); 
-            clonedSvg.appendChild(clonedG);
-            
-            clonedSvg.querySelectorAll('.hidden-element').forEach(el => el.remove());
-            
-            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
             const nodesVisible = currentNodes.filter(d => !hiddenNodes.has(d.id));
-            const padding = 50; 
-
             if (nodesVisible.length === 0) {
                 alert("No hay nodos visibles para capturar.");
                 return;
             }
 
+            const padding = 50; 
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+
+            // 1. Calcular límites (bbox) de los nodos visibles
             nodesVisible.forEach(d => {
                 const r = FIXED_NODE_RADIUS; 
-                minX = Math.min(minX, d.x - r - 10); 
-                minY = Math.min(minY, d.y - r - 10);
-                maxX = Math.max(maxX, d.x + r + 10);
-                maxY = Math.max(maxY, d.y + r + 10);
+                minX = Math.min(minX, d.x - r); 
+                minY = Math.min(minY, d.y - r);
+                maxX = Math.max(maxX, d.x + r);
+                maxY = Math.max(maxY, d.y + r);
             });
 
             const finalMinX = minX - padding;
             const finalMinY = minY - padding;
             const finalWidth = (maxX - minX) + 2 * padding;
             const finalHeight = (maxY - minY) + 2 * padding;
+            
+            // 2. Crear un SVG temporal para la exportación
+            const tempSvg = d3.create("svg")
+                .attr("xmlns", "http://www.w3.org/2000/svg")
+                .attr("viewBox", `${finalMinX} ${finalMinY} ${finalWidth} ${finalHeight}`)
+                .attr("width", finalWidth)
+                .attr("height", finalHeight);
 
-            clonedSvg.setAttribute('viewBox', `${finalMinX} ${finalMinY} ${finalWidth} ${finalHeight}`);
-            clonedSvg.setAttribute('width', finalWidth);
-            clonedSvg.setAttribute('height', finalHeight);
+            // 3. Añadir el marcador de flecha (defs)
+            const defs = tempSvg.append("defs");
+            defs.html(svg.select("defs").html());
 
-            // Añadir estilos CSS en línea
+            // 4. Clonar solo los elementos visibles del gGraph
+            const clonedG = tempSvg.append("g");
+            
+            // Clonar enlaces visibles y recalcular la ruta
+            const linksData = currentLinks.filter(d => !hiddenNodes.has(d.source.id) && !hiddenNodes.has(d.target.id));
+
+            clonedG.append("g")
+                .attr("class", "links")
+                .selectAll("path")
+                .data(linksData)
+                .join("path")
+                .attr("class", "link")
+                .attr("marker-end", "url(#arrowhead)")
+                .attr("d", d => {
+                    // Recalcular la ruta D de la misma manera que en el tick
+                    const radiusTarget = FIXED_NODE_RADIUS; 
+                    const dx = d.target.x - d.source.x;
+                    const dy = d.target.y - d.source.y;
+                    const dr = Math.sqrt(dx * dx + dy * dy); 
+                    
+                    const targetDistance = radiusTarget + ARROW_HEAD_OFFSET; 
+                    
+                    if (dr < targetDistance) {
+                        return `M${d.source.x},${d.source.y}A${dr},${dr} 0 0,1 ${d.target.x},${d.target.y}`;
+                    }
+
+                    const ratio = (dr - targetDistance) / dr;
+                    const Tx = d.source.x + (dx * ratio);
+                    const Ty = d.source.y + (dy * ratio);
+
+                    return `M${d.source.x},${d.source.y}A${dr},${dr} 0 0,1 ${Tx},${Ty}`;
+                });
+                
+            // Clonar nodos visibles
+            const nodesG = clonedG.append("g").attr("class", "nodes")
+                .selectAll(".node")
+                .data(nodesVisible)
+                .join("g")
+                .attr("class", "node")
+                .attr("transform", d => `translate(${d.x},${d.y})`); 
+
+            nodesG.append("circle")
+                .attr("r", FIXED_NODE_RADIUS)
+                .attr("fill", d => {
+                    const colorIndex = Math.min(d.degree - 1, colorRange.length - 1);
+                    return colorRange[colorIndex] || colorRange[colorRange.length - 1]; 
+                })
+                .attr("stroke", d => selectedNodes.has(d.id) ? '#ff0000' : '#fff')
+                .attr("stroke-width", d => selectedNodes.has(d.id) ? '4px' : '2px');
+
+            nodesG.append("text")
+                .text(d => d.name)
+                .style("font-size", FONT_SIZE_NODE_TEXT + "px") 
+                .each(function(d) {
+                    // Volver a aplicar el wrap text para que esté en el contexto del SVG de exportación
+                    wrapText(d3.select(this), FIXED_NODE_RADIUS); 
+                });
+
+
+            // 5. Añadir estilos CSS en línea (CRUCIAL para SVG autónomo)
             const style = document.createElement('style');
             style.textContent = `
                 .link { fill: none; stroke: #999; stroke-opacity: 0.6; stroke-width: 1.5px; }
                 .node circle { stroke: #fff; stroke-width: 2px; }
                 .node text { font-size: ${FONT_SIZE_NODE_TEXT}px; fill: #000; text-anchor: middle; font-weight: bold; pointer-events: none; } 
+                .node.selected circle { stroke: #ff0000; stroke-width: 4px; }
                 #arrowhead path { fill: #999; } 
             `;
-            clonedSvg.prepend(style);
+            tempSvg.node().prepend(style);
 
-            clonedSvg.selectAll(".node text").each(function(d) {
-                wrapText(d3.select(this), FIXED_NODE_RADIUS);
-            });
 
-            let svgString = serializer.serializeToString(clonedSvg);
+            // 6. Serializar y descargar
+            const serializer = new XMLSerializer();
+            let svgString = serializer.serializeToString(tempSvg.node());
             
             svgString = '<?xml version="1.0" standalone="no"?>\r\n' + svgString;
             
@@ -647,19 +721,165 @@
             const translateX = width / 2 - (minX + dataWidth / 2) * scale;
             const translateY = height / 2 - (minY + dataHeight / 2) * scale;
             
-            const transform = d3.zoomIdentity.translate(translateX, translateY).scale(scale);
+            currentTransform = d3.zoomIdentity.translate(translateX, translateY).scale(scale); 
 
-            svg.call(zoom.transform, transform);
+            svg.call(zoom.transform, currentTransform);
         }
 
+        // --- FUNCIÓN ZOOM CON FILTRO DE TECLA ---
         const zoom = d3.zoom()
             .scaleExtent([0.1, 10]) 
+            .filter(event => !event.ctrlKey && !event.metaKey) 
             .on("zoom", (event) => {
-                gGraph.attr("transform", event.transform);
+                currentTransform = event.transform; 
+                gGraph.attr("transform", currentTransform);
+                gSelection.attr("transform", currentTransform); 
             });
 
         // ----------------------------------------------------------------------------------
-        // --- FUNCIÓN PRINCIPAL DE DIBUJO DE RED (AJUSTADA) ---
+        // *** FUNCIÓN DRAG (GRUPAL) ***
+        // ----------------------------------------------------------------------------------
+        function drag(simulation) {
+            let draggedNode = null;
+            
+            function dragstarted(event, d) {
+                if (!event.active) simulation.alphaTarget(0.3).restart();
+                
+                // Si el nodo NO está en el grupo seleccionado, deseleccionar todo y seleccionar este.
+                if (!selectedNodes.has(d.id)) {
+                    selectedNodes.clear();
+                    selectedNodes.add(d.id);
+                    updateNodeSelection();
+                }
+
+                // Fijar todos los nodos seleccionados
+                draggedNode = d;
+                selectedNodes.forEach(id => {
+                    const node = currentNodes.find(n => n.id === id);
+                    if (node) {
+                        node.fx = node.x; 
+                        node.fy = node.y;
+                    }
+                });
+            }
+            
+            function dragged(event, d) {
+                if (!draggedNode) return;
+                
+                // Calcular el desplazamiento (delta)
+                const dx = event.x - draggedNode.fx;
+                const dy = event.y - draggedNode.fy;
+
+                // Mover la posición fija de *todos* los nodos seleccionados
+                selectedNodes.forEach(id => {
+                    const node = currentNodes.find(n => n.id === id);
+                    if (node) {
+                        node.fx = node.x + dx; 
+                        node.fy = node.y + dy;
+                    }
+                });
+                
+                // Forzar un tick para la respuesta visual inmediata
+                simulation.tick();
+                gGraph.selectAll(".node").attr("transform", n => `translate(${n.x},${n.y})`);
+            }
+            
+            function dragended(event, d) {
+                if (!event.active) simulation.alphaTarget(0);
+                
+                // Liberar (poner fx/fy a null)
+                if (simulation.alpha() <= 0.001) {
+                    selectedNodes.forEach(id => {
+                        const node = currentNodes.find(n => n.id === id);
+                        if (node) {
+                            node.fx = null;
+                            node.fy = null;
+                        }
+                    });
+                }
+                draggedNode = null; 
+            }
+            return d3.drag()
+                .on("start", dragstarted)
+                .on("drag", dragged)
+                .on("end", dragended);
+        }
+
+        // ----------------------------------------------------------------------------------
+        // FUNCIÓN: SELECCIÓN DE GRUPO CON ARRASTRE (LASSO SELECTION)
+        // ----------------------------------------------------------------------------------
+        function lassoSelection() {
+            let startPoint;
+            
+            function dragstarted(event) {
+                if (!event.ctrlKey && !event.metaKey) return; 
+
+                if (!event.shiftKey) {
+                    selectedNodes.clear();
+                    updateNodeSelection();
+                }
+
+                startPoint = [event.x, event.y];
+                
+                selectionBox
+                    .attr("x", startPoint[0])
+                    .attr("y", startPoint[1])
+                    .attr("width", 0)
+                    .attr("height", 0)
+                    .style("opacity", 1);
+            }
+
+            function dragged(event) {
+                if (!event.ctrlKey && !event.metaKey) return;
+                
+                const currentX = event.x;
+                const currentY = event.y;
+                
+                const x = Math.min(startPoint[0], currentX);
+                const y = Math.min(startPoint[1], currentY);
+                const width = Math.abs(currentX - startPoint[0]);
+                const height = Math.abs(currentY - startPoint[1]);
+
+                selectionBox
+                    .attr("x", x)
+                    .attr("y", y)
+                    .attr("width", width)
+                    .attr("height", height);
+
+                const currentSelectionBeforeDrag = new Set(selectedNodes);
+                if (!event.shiftKey) selectedNodes.clear();
+                
+                gGraph.selectAll(".node").each(function(d) {
+                    const nodeX = currentTransform.applyX(d.x); 
+                    const nodeY = currentTransform.applyY(d.y);
+
+                    const isInside = (nodeX >= x && nodeX <= x + width &&
+                                      nodeY >= y && nodeY <= y + height);
+                    
+                    if (isInside) {
+                        selectedNodes.add(d.id);
+                    } else if (!event.shiftKey && currentSelectionBeforeDrag.has(d.id)) {
+                         selectedNodes.delete(d.id);
+                    }
+                });
+                
+                updateNodeSelection();
+            }
+
+            function dragended(event) {
+                if (!event.ctrlKey && !event.metaKey) return;
+                selectionBox.style("opacity", 0);
+            }
+
+            return d3.drag()
+                .on("start", dragstarted)
+                .on("drag", dragged)
+                .on("end", dragended);
+        }
+
+
+        // ----------------------------------------------------------------------------------
+        // --- FUNCIÓN PRINCIPAL DE DIBUJO DE RED ---
         // ----------------------------------------------------------------------------------
 
         function drawNetwork(nodes, links, fixedLayout) {
@@ -673,9 +893,18 @@
 
             defineArrowMarker(svg); 
             
+            // 1. Aplicar Zoom y Lasso Selection
             svg.call(zoom);
+            svg.call(lassoSelection()); 
             
-            gGraph = svg.append("g"); 
+            // 2. Crear grupos: gSelection debe ir primero
+            gSelection = svg.append("g").attr("class", "selection-group");
+            gGraph = svg.append("g").attr("class", "graph-group"); 
+
+            // 3. Crear el rectángulo de selección 
+            selectionBox = gSelection.append("rect")
+                .attr("id", "selection-box")
+                .style("opacity", 0);
 
             const colorScale = d3.scaleOrdinal()
                 .domain(d3.range(1, d3.max(nodes, d => d.degree) + 1)) 
@@ -692,7 +921,6 @@
                 .force("link", d3.forceLink(links).id(d => d.id).distance(FIXED_NODE_RADIUS * 3))
                 .force("charge", d3.forceManyBody().strength(-200)) 
                 .force("center", d3.forceCenter(width / 2, height / 2))
-                
                 .force("limitX", d3.forceX(width / 2).strength(d => {
                     const radius = FIXED_NODE_RADIUS; 
                     if (d.x < radius || d.x > width - radius) return 0.5;
@@ -732,11 +960,29 @@
                 .data(nodes)
                 .join("g")
                 .attr("class", "node")
-                .call(drag(simulation))
+                .call(drag(simulation)) 
                 
-                // *** MODIFICADO: Eliminados los eventos mouseover/mouseout del nodo ***
-                .on("mouseover", null)
-                .on("mouseout", null); 
+                // *** EVENTOS DE NODO ELIMINADOS (mouseover/mouseout) ***
+                .on("mouseover", null) 
+                .on("mouseout", null)
+                .on("click", function(event, d) {
+                    if (event.ctrlKey || event.metaKey) return; 
+                    
+                    if (event.shiftKey) {
+                        // Selección aditiva con Shift
+                        if (selectedNodes.has(d.id)) {
+                            selectedNodes.delete(d.id);
+                        } else {
+                            selectedNodes.add(d.id);
+                        }
+                    } else {
+                        // Selección simple: deseleccionar todo y seleccionar este
+                        selectedNodes.clear();
+                        selectedNodes.add(d.id);
+                    }
+                    
+                    updateNodeSelection();
+                });
 
             node.append("circle")
                 .attr("r", FIXED_NODE_RADIUS)
@@ -777,32 +1023,11 @@
             });
             
             updateNodeVisibility(); 
+            updateNodeSelection(); 
             
             if (fixedLayout) {
                 centerAndZoom(nodes);
             }
-        }
-        
-        // FUNCIÓN DRAG AND DROP (ARRASTRAR)
-        function drag(simulation) {
-            function dragstarted(event, d) {
-                if (!event.active) simulation.alphaTarget(0.3).restart();
-                d.fx = d.x; 
-                d.fy = d.y; 
-                // *** MODIFICADO: Eliminado .attr("stroke", "black") ***
-            }
-            function dragged(event, d) {
-                d.fx = event.x; 
-                d.fy = event.y;
-            }
-            function dragended(event, d) {
-                if (!event.active) simulation.alphaTarget(0);
-                // *** MODIFICADO: Eliminado .attr("stroke", null) ***
-            }
-            return d3.drag()
-                .on("start", dragstarted)
-                .on("drag", dragged)
-                .on("end", dragended);
         }
 
         drawNetwork([], []); 
